@@ -1,4 +1,4 @@
 classes=80
-train=data/coco2017/train2017.txt
-valid=data/coco2017/val2017.txt
-names=data/coco.names
+train=/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/train2017.txt
+valid=/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/val2017.txt
+names=/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco.names

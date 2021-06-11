@@ -619,7 +619,7 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
     opt.weights = last if opt.resume else opt.weights
-    opt.cfg = list(glob.iglob('./**/' + opt.cfg, recursive=True))[0]  # find file
+    opt.cfg = list(glob.iglob( opt.cfg, recursive=True))[0]  # find file
     # opt.data = list(glob.iglob(' ./**/' + opt.data, recursive=True))[0]  # find file
     if opt.local_rank in [-1, 0]:
         print(opt)

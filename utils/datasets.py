@@ -288,7 +288,9 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
         self.is_gray_scale = is_gray_scale
 
         # Define labels
-        self.label_files = [x.replace('images', 'labels').replace(os.path.splitext(x)[-1], '.txt')
+        #self.label_files = [x.replace('images', 'labels').replace(os.path.splitext(x)[-1], '.txt')
+                            #for x in self.img_files]
+        self.label_files = [x.replace('/work/m107061466/cocoapi/images/', '/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/labels/').replace(os.path.splitext(x)[-1], '.txt')
                             for x in self.img_files]
 
         # Rectangular Training  https://github.com/ultralytics/yolov3/issues/232

@@ -117,12 +117,14 @@ def train(hyp):
     # gridmask = GridMask(d1=96, d2=224, rotate=360, ratio=0.6, mode=1, prob=0.8)
 
     # Optimizer
-    pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
+    pg0, pg1, pg2, pg3 = [], [], [], []  # optimizer parameter groups
     for k, v in dict(model.named_parameters()).items():
         if '.bias' in k:
             pg2 += [v]  # biases
         elif 'Conv2d.weight' in k:
             pg1 += [v]  # apply weight_decay
+        #elif 'alpha' in k:
+        #    pg3 += [v]
         else:
             pg0 += [v]  # all else
 
@@ -134,8 +136,19 @@ def train(hyp):
         optimizer = optim.SGD(pg0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
     optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
     optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
-    print('Optimizer groups: %g .bias, %g Conv2d.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
+    optimizer.add_param_group({'params': pg3, 'lr':hyp['lr0']* 1e-3})
+    print('Optimizer groups: %g .bias, %g Conv2d.weight, %g Quantization parameter,%g other' % (len(pg2), len(pg1), len(pg3), len(pg0)))
     del pg0, pg1, pg2
+
+    if opt.freeze_bn:
+        print("Freeze BN XXD")
+        for module in model.modules():
+            if isinstance(module, nn.BatchNorm2d):
+                if hasattr(module, 'weight'):
+                    module.weight.requires_grad_(False)
+                if hasattr(module, 'bias'):
+                    module.bias.requires_grad_(False)
+                module.eval()
 
     best_fitness = 0.0
     if weights != 'None':
@@ -616,6 +629,7 @@ if __name__ == '__main__':
     # DDP get local-rank
     parser.add_argument('--rank', default=0, help='rank of current process')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
+    parser.add_argument('--freeze-bn', action='store_true', help='freeze - bn')
 
     opt = parser.parse_args()
     opt.weights = last if opt.resume else opt.weights

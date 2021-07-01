@@ -1,4 +1,4 @@
 classes=80
-train=/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/train2017.txt
-valid=/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/val2017.txt
-names=/home/m107061466/coding/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco.names
+train=/home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/train2017.txt
+valid=/home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco/val2017.txt
+names=/home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco.names

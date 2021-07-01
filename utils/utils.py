@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 import torch.nn.functional as F
 from . import torch_utils  # , google_utils
+matplotlib.use('Agg')
 
 # Set printoptions
 torch.set_printoptions(linewidth=320, precision=5, profile='long')

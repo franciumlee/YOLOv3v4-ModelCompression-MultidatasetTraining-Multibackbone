@@ -1,0 +1,7 @@
+python3 ../../train.py \
+--data /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco2017.data \
+--batch-size 32 \
+--weights '/home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/scripts/fp32_tiny_yolov3/weights/last.pt' \
+--cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov3tiny/yolov3-tiny.cfg \
+--device 0,1,2,3 \
+--epoch 600

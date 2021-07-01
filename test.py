@@ -6,6 +6,8 @@ from models import *
 from utils.datasets import *
 from utils.utils import *
 
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 
 def test(cfg,
          data,
@@ -220,14 +222,16 @@ def test(cfg,
             json.dump(jdict, file)
 
         try:
-            from pycocotools.coco import COCO
-            from pycocotools.cocoeval import COCOeval
+            
 
             # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
             # cocovision = opt.data.split('\\')[-1].split('.')[0]
             # print(cocovision)
             # cocoGt = COCO(glob.glob('data/'+cocovision+'/instances_val*.json')[0])  # initialize COCO ground truth api
-            cocoGt = COCO(glob.glob('data/coco2014/instances_val*.json')[0])  # initialize COCO ground truth api
+            # cocoGt = COCO(glob.glob('data/coco2014/instances_val*.json')[0])  # initialize COCO ground truth api
+            # /data2/coco/coco2017/
+            # glob.glob('/data2/coco/coco2017/instances_val*.json')[0]
+            cocoGt = COCO(glob.glob('/data2/coco/coco2017/annotations/instances_val*.json')[0])
             cocoDt = cocoGt.loadRes('results.json')  # initialize COCO pred api
 
             cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
@@ -270,9 +274,10 @@ if __name__ == '__main__':
 
     opt = parser.parse_args()
     opt.save_json = opt.save_json or any([x in opt.data for x in ['coco.data', 'coco2014.data', 'coco2017.data']])
-    opt.cfg = list(glob.iglob('./**/' + opt.cfg, recursive=True))[0]  # find file
-    opt.data = list(glob.iglob('./**/' + opt.data, recursive=True))[0]  # find file
-
+    #opt.cfg = list(glob.iglob('./**/' + opt.cfg, recursive=True))[0]  # find file
+    #opt.data = list(glob.iglob('./**/' + opt.data, recursive=True))[0]  # find file
+    opt.cfg  = opt.cfg #list(glob.iglob(opt.cfg, recursive=True))[0]  
+    opt.data = opt.data#list(glob.iglob(opt.data, recursive=True))[0]
     print(opt)
 
     # task = 'test', 'study', 'benchmark'

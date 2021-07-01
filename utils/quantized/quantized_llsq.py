@@ -223,6 +223,50 @@ class LLSQConv2d(nn.Conv2d):
         )
         return output
 
+class LLSQConv2dv2(nn.Conv2d):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=1,
+            bias=True,
+            a_bits=8,
+            w_bits=8,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias
+        )
+        # 实例化调用A和W量化器
+        self.activation_quantizer = activation_quantize(a_bits=a_bits)
+        self.weight_quantizer = weight_quantize(w_bits=w_bits, out_channel=out_channels)
+
+    def forward(self, input):
+        # 量化A和W
+        input = self.activation_quantizer(input)
+        q_weight = self.weight_quantizer(self.weight)
+        # 量化卷积
+        output = F.conv2d(
+            input=input,
+            weight=q_weight,
+            bias=self.bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups
+        )
+        return output
+
 def reshape_to_activation(input):
     return input.reshape(1, -1, 1, 1)
 

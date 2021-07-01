@@ -1,0 +1,27 @@
+python3 ../../test.py \
+--data /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco2017.data \
+--batch-size 16 \
+--weights /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/weights/pretrain_weights/yolov4.weights \
+--cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov4/yolov4.cfg  \
+--img-size 640 \
+--device 6 \
+--conf-thres 0.45 \
+--conf 0.005 | tee after_pruning.log
+
+# python3 ../../test.py \
+# --data /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco2017.data \
+# --batch-size 256 \
+# --weights /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/weights/pretrain_weights/yolov4-tiny_1_.weights \
+# --cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov4tiny/yolov4-tiny.cfg  \
+# --img-size 640 \
+# --device 6 \
+# --conf-thres 0.45 \
+# --conf 0.005 | tee before_pruning.log
+
+python3 ../../test.py \
+--data /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco2017.data \
+--batch-size 16 \
+--weights /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/weights/best.weights \
+--cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov4tiny/yolov4-tiny.cfg  \
+--img-size 416 \
+--device 0

@@ -1,0 +1,12 @@
+python3 ../../train.py \
+--data /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco2017.data \
+-pt --batch-size 16 \
+--weights /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/weights/pretrain_weights/yolov4-tiny.weights \
+--cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov4tiny/yolov4-tiny.cfg \
+--quantized 6 \
+--a-bit 4 \
+--w-bit 4 \
+--device 6,1 \
+--t_cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov4tiny/yolov4-tiny.cfg \
+--t_weights /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/scripts/fp32/weights/best.pt \
+--KDstr 2

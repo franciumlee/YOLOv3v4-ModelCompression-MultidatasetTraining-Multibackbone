@@ -1,0 +1,8 @@
+python3 ../../train.py \
+--data /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/data/coco2017.data \
+-pt --batch-size 32 \
+--weights /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/weights/pretrain_weights/yolov4-tiny.weights \
+--cfg /home/zfli/coding/object_detection/OB_Sparsity/YOLOv3v4-ModelCompression-MultidatasetTraining-Multibackbone/cfg/yolov4tiny/yolov4-tiny.cfg \
+--quantized 7 \
+--device 6,1 \
+--resume

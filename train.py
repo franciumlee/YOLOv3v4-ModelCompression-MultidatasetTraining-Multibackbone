@@ -123,8 +123,8 @@ def train(hyp):
             pg2 += [v]  # biases
         elif 'Conv2d.weight' in k:
             pg1 += [v]  # apply weight_decay
-        #elif 'alpha' in k:
-        #    pg3 += [v]
+        elif ('alpha' in k) and (opt.freeze_bn == True):
+            pg3 += [v]
         else:
             pg0 += [v]  # all else
 
@@ -136,7 +136,8 @@ def train(hyp):
         optimizer = optim.SGD(pg0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
     optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
     optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
-    optimizer.add_param_group({'params': pg3, 'lr':hyp['lr0']* 1e-3})
+    if (opt.freeze_bn == True):
+        optimizer.add_param_group({'params': pg3, 'lr':hyp['lr0']* 1e-1})
     print('Optimizer groups: %g .bias, %g Conv2d.weight, %g Quantization parameter,%g other' % (len(pg2), len(pg1), len(pg3), len(pg0)))
     del pg0, pg1, pg2
 
@@ -175,8 +176,12 @@ def train(hyp):
             if chkpt.get('training_results') is not None:
                 with open(results_file, 'w') as file:
                     file.write(chkpt['training_results'])  # write results.txt
-            if chkpt.get('epoch') is not None:
+            if (chkpt.get('epoch') is not None) and (opt.start_epochs == -1):
                 start_epoch = chkpt['epoch'] + 1
+                print("start epoch: ", start_epoch)
+            else:
+                start_epoch = opt.start_epochs
+                print("start epoch: ", start_epoch)
             del chkpt
 
         elif len(weights) > 0:  # darknet format
@@ -629,7 +634,9 @@ if __name__ == '__main__':
     # DDP get local-rank
     parser.add_argument('--rank', default=0, help='rank of current process')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--freeze-bn', action='store_true', help='freeze - bn')
+    parser.add_argument('--freeze-bn', action='store_true', help='freeze bn')
+    parser.add_argument('--fuse-bn', action='store_true', help='freeze bn')
+    parser.add_argument('--start-epochs', type=int, default=-1, help='setting start epoch')
 
     opt = parser.parse_args()
     opt.weights = last if opt.resume else opt.weights

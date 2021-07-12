@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from models import *
 from utils.datasets import *
 from utils.utils import *
+from pytorch_nndct.apis import torch_quantizer, dump_xmodel
 
 
 def test(cfg,
@@ -29,7 +30,8 @@ def test(cfg,
          plot=True,
          is_gray_scale=False,
          maxabsscaler=False,
-         fuse_bn = False):
+         fuse_bn = False,
+         Xil_FPGA = False):
     # Initialize/load model and set device
     if model is None:
         device = torch_utils.select_device(opt.device, batch_size=batch_size)
@@ -72,6 +74,13 @@ def test(cfg,
     iouv = torch.linspace(0.5, 0.95, 10).to(device)  # iou vector for mAP@0.5:0.95
     iouv = iouv[0].view(1)  # comment for mAP@0.5:0.95
     niou = iouv.numel()
+
+    if Xil_FPGA == True:
+        input = torch.randn([batch_size, 3, 640, 640])
+        quantizer = torch_quantizer(
+        'calib', model.eval(), (input), device=device)
+        quantizer.export_xmodel(deploy_check=False)
+        model = quantizer.quant_model
 
     # Dataloader
     if dataloader is None:
@@ -275,6 +284,7 @@ if __name__ == '__main__':
     parser.add_argument('--gray-scale', action='store_true', help='gray scale trainning')
     parser.add_argument('--maxabsscaler', '-mas', action='store_true', help='Standarize input to (-1,1)')
     parser.add_argument('--fuse-bn', action='store_true', help='freeze bn')
+    parser.add_argument('--Xil_FPGA', action='store_true', help='FPGA')
 
     opt = parser.parse_args()
     opt.save_json = opt.save_json or any([x in opt.data for x in ['coco.data', 'coco2014.data', 'coco2017.data']])
@@ -303,7 +313,8 @@ if __name__ == '__main__':
              rank=-1,
              is_gray_scale=opt.gray_scale,
              maxabsscaler=opt.maxabsscaler,
-             fuse_bn = opt.fuse_bn)
+             fuse_bn = opt.fuse_bn,
+             Xil_FPGA = opt.Xil_FPGA)
 
     elif opt.task == 'benchmark':  # mAPs at 256-640 at conf 0.5 and 0.7
         y = []

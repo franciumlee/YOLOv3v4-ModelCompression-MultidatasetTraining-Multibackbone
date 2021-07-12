@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import torch.backends.cudnn as cudnn
 from utils.quantized.quantized_google import *
-
+from utils.quantized.quantized_llsq import *
 
 def init_seeds(seed=0):
     torch.manual_seed(seed)
@@ -97,6 +97,34 @@ def fuse_conv_and_bn(conv, bn, quantized=-1, FPGA=False):
                                                  bias=True)
             fusedconv.weight_quantizer = deepcopy(conv.weight_quantizer)
             fusedconv.activation_quantizer = deepcopy(conv.activation_quantizer)
+        elif quantized == 6:
+            fusedconv = LLSQConv2d(conv.in_channels,
+                                                 conv.out_channels,
+                                                 groups=conv.groups,
+                                                 kernel_size=conv.kernel_size,
+                                                 stride=conv.stride,
+                                                 padding=conv.padding,
+                                                 a_bits=conv.a_bits,
+                                                 w_bits=conv.w_bits,
+                                                 alpha_bits =conv.alpha_bits,
+                                                 bias=True)
+            fusedconv.weight_quantizer = deepcopy(conv.weight_quantizer)
+            fusedconv.activation_quantizer = deepcopy(conv.activation_quantizer)
+            fusedconv.bias_quantization = deepcopy(conv.bias_quantization)
+        elif quantized == 7:
+            fusedconv = LLSQConv2dv2(conv.in_channels,
+                                                 conv.out_channels,
+                                                 groups=conv.groups,
+                                                 kernel_size=conv.kernel_size,
+                                                 stride=conv.stride,
+                                                 padding=conv.padding,
+                                                 a_bits=conv.a_bits,
+                                                 w_bits=conv.w_bits,
+                                                 alpha_bits =conv.alpha_bits,
+                                                 bias=True)
+            fusedconv.weight_quantizer = deepcopy(conv.weight_quantizer)
+            fusedconv.activation_quantizer = deepcopy(conv.activation_quantizer)
+            fusedconv.bias_quantization = deepcopy(conv.bias_quantization)
         else:
             print("BN fuse error!")
             return
@@ -112,7 +140,7 @@ def fuse_conv_and_bn(conv, bn, quantized=-1, FPGA=False):
             b_conv = torch.zeros(conv.weight.size(0))
         b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
         fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
-
+        
         return fusedconv
 
 

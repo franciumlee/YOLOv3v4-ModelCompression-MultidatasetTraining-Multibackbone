@@ -15,7 +15,7 @@ ONNX_EXPORT = False
 # YOLO
 def create_modules(module_defs, img_size, cfg, quantized, quantizer_output, layer_idx, reorder, TM, TN, a_bit=8,
                    w_bit=8,
-                   FPGA=False, steps=0, is_gray_scale=False, maxabsscaler=False):
+                   FPGA=False, steps=0, is_gray_scale=False, maxabsscaler=False, alpha_bits = 32, transfer = -1):
     # Constructs module list of layer blocks from module configuration in module_defs
 
     img_size = [img_size] * 2 if isinstance(img_size, int) else img_size  # expand if necessary
@@ -242,7 +242,34 @@ def create_modules(module_defs, img_size, cfg, quantized, quantizer_output, laye
                                                               groups=mdef['groups'] if 'groups' in mdef else 1,
                                                               bias=not bn,
                                                               a_bits=a_bit,
-                                                              w_bits=w_bit))
+                                                              w_bits=w_bit,
+                                                              alpha_bits = alpha_bits))
+                    if bn:
+                        modules.add_module('BatchNorm2d', nn.BatchNorm2d(filters, momentum=0.1))
+
+                    if mdef['activation'] == 'leaky':
+                        modules.add_module('activation', nn.LeakyReLU(0.1 if not maxabsscaler else 0.25, inplace=True))
+                        # modules.add_module('activation', nn.PReLU(num_parameters=1, init=0.10))
+                        # modules.add_module('activation', Swish())
+                    if mdef['activation'] == 'relu6':
+                        modules.add_module('activation', ReLU6())
+                    if mdef['activation'] == 'h_swish':
+                        modules.add_module('activation', HardSwish())
+                    if mdef['activation'] == 'relu':
+                        modules.add_module('activation', nn.ReLU())
+                    if mdef['activation'] == 'mish':
+                        modules.add_module('activation', Mish())
+            elif quantized == 7:
+                    modules.add_module('Conv2d', LLSQConv2dv2(in_channels=output_filters[-1],
+                                                              out_channels=filters,
+                                                              kernel_size=kernel_size,
+                                                              stride=int(mdef['stride']),
+                                                              padding=pad,
+                                                              groups=mdef['groups'] if 'groups' in mdef else 1,
+                                                              bias=not bn,
+                                                              a_bits=a_bit,
+                                                              w_bits=w_bit,
+                                                              alpha_bits = alpha_bits))
                     if bn:
                         modules.add_module('BatchNorm2d', nn.BatchNorm2d(filters, momentum=0.1))
 
@@ -539,7 +566,7 @@ def create_modules(module_defs, img_size, cfg, quantized, quantizer_output, laye
             if 'groups' in mdef:
                 filters = filters // 2
             routs.extend([i + l if l < 0 else l for l in layers])
-            if quantized == -1 or quantized == 2 or quantized == 6:
+            if quantized == -1 or quantized == 2 or quantized == 6 or quantized == 7:
                 if 'groups' in mdef:
                     modules = FeatureConcat(layers=layers, groups=True)
                 else:
@@ -555,7 +582,7 @@ def create_modules(module_defs, img_size, cfg, quantized, quantizer_output, laye
             layers = mdef['from']
             filters = output_filters[-1]
             routs.extend([i + l if l < 0 else l for l in layers])
-            if quantized == -1 or quantized == 2 or quantized == 6:
+            if quantized == -1 or quantized == 2 or quantized == 6 or quantized == 7:
                 modules = Shortcut(layers=layers, weight='weights_type' in mdef)
             else:
                 modules = QuantizedShortcut(layers=layers, weight='weights_type' in mdef, bits=a_bit, FPGA=FPGA)
@@ -698,7 +725,7 @@ class Darknet(nn.Module):
 
     def __init__(self, cfg, img_size=(416, 416), verbose=False, quantized=-1, a_bit=8, w_bit=8, FPGA=False,
                  quantizer_output=False, layer_idx=-1, reorder=False, TM=32, TN=32, steps=0, is_gray_scale=False,
-                 maxabsscaler=False):
+                 maxabsscaler=False, alpha_bits =32, transfer = -1):
         super(Darknet, self).__init__()
 
         if isinstance(cfg, str):
@@ -720,7 +747,7 @@ class Darknet(nn.Module):
                                                       quantizer_output=self.quantizer_output, reorder=self.reorder,
                                                       TM=self.TM, TN=self.TN, layer_idx=self.layer_idx,
                                                       a_bit=self.a_bit, w_bit=self.w_bit, FPGA=self.FPGA, steps=steps,
-                                                      is_gray_scale=is_gray_scale, maxabsscaler=maxabsscaler)
+                                                      is_gray_scale=is_gray_scale, maxabsscaler=maxabsscaler, alpha_bits=alpha_bits, transfer = transfer)
         self.yolo_layers = get_yolo_layers(self)
         # torch_utils.initialize_weights(self)
 
@@ -814,8 +841,8 @@ class Darknet(nn.Module):
 
     def fuse(self, quantized=-1, FPGA=False):
         # Fuse Conv2d + BatchNorm2d layers throughout model
-        if quantized != -1 or FPGA == True:
-            return
+        # if quantized != -1 or FPGA == True:
+        #     return
         print('Fusing layers...')
         fused_list = nn.ModuleList()
         for a in list(self.children())[0]:

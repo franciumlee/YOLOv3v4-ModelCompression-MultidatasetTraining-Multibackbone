@@ -191,9 +191,9 @@ if __name__ == '__main__':
     print(AsciiTable(metric_table).table)
 
     # 生成剪枝后的cfg文件并保存模型
-    pruned_cfg_name = opt.cfg.replace('/', f'/normal_prune_{percent}_')
+    pruned_cfg_name = opt.cfg.replace('.cfg', f'normal_prune_{percent}_.cfg')
     # 创建存储目录
-    dir_name = pruned_cfg_name.split('/')[0] + '/' + pruned_cfg_name.split('/')[1]
+    dir_name ='.' + pruned_cfg_name.split('/')[0] + '/' + pruned_cfg_name.split('/')[1]
     if not os.path.isdir(dir_name):
         os.makedirs(dir_name)
 

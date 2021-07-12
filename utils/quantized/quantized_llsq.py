@@ -4,6 +4,7 @@ import numpy as np
 import os
 
 import torch
+from torch._C import BenchmarkConfig
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import init
@@ -38,7 +39,19 @@ class quantizer_w(Function):
 
         return grad_input, grad_alpha, None
 
+class quantizer_bias(Function):
+    @staticmethod
+    def forward(self, input, alpha, bits):
+        self.pose_clamp = 2 ** (bits - 1) - 1
+        self.nege_clamp = - 2 ** (bits - 1)
+        output = torch.clamp(torch.round( input / alpha ), self.nege_clamp, self.pose_clamp) 
+        output = output * alpha 
+        return output
 
+    @staticmethod
+    def backward(self, grad_output):
+        grad_input = grad_output.clone()
+        return grad_input, None, None
 
 class quantizer_a(Function):
     @staticmethod
@@ -76,13 +89,16 @@ class quantizer_a(Function):
 
 # ********************* A(特征)量化 ***********************
 class activation_quantize(nn.Module):
-    def __init__(self, a_bits):
+    def __init__(self, a_bits, alpha_bits = 32, transfer = -1):
         super().__init__()
         self.a_bits = a_bits
         #self.register_buffer('alpha', torch.zeros(1))  # 量化比例因子
         self.alpha =  Parameter(torch.rand( 1))
         self.register_buffer('init_state', torch.zeros(1))
-        print("Act quantize bits ", self.a_bits)
+        self.alpha_bits = alpha_bits
+        self.init_flag = 0
+        self.transfer = transfer
+        print("Act quantize bits ", self.a_bits, "  alpha_bits:", self.alpha_bits)
     def quantizer(self, input, alpha):
         output = quantizer_a.apply(input, alpha, self.a_bits)
         return output
@@ -102,6 +118,11 @@ class activation_quantize(nn.Module):
         scale = np.array(self.alpha)#.reshape(1, -1)
         return scale
 
+    def quantize_alpha(self, alpha, alpha_bits = 32):
+        q_code = (alpha_bits - torch.ceil( torch.log2(torch.max(alpha)) + 1 - 10**(-5))).detach()
+        alpha_out = torch.clamp( torch.round( alpha * (2 ** q_code)), (-2**(alpha_bits-1)), (2**(alpha_bits-1) - 1) )  / (2 ** q_code)
+        return alpha_out
+
     def forward(self, input):
         if self.a_bits == 32:
             output = input
@@ -113,19 +134,31 @@ class activation_quantize(nn.Module):
             if self.training and self.init_state == 0:
                 self.alpha.data.copy_(input.detach().abs().max() / (pose_clamp))
                 self.init_state.fill_(1)
-            output = self.quantizer(input, self.alpha)
-        return output
+            elif self.init_flag == 0 and self.transfer != -1:
+                self.alpha.data.copy_(self.alpha.detach() * (2**(self.transfer - 1)) / (2**(self.w_bits - 1)))
+                self.init_flag = 1
+
+            if self.alpha_bits == 32:
+                alpha = self.alpha
+            else:
+                alpha = self.quantize_alpha(self.alpha, self.alpha_bits)
+            
+            output = self.quantizer(input, alpha)
+        return output, alpha.detach()
 
 
 # ********************* W(模型参数)量化 ***********************
 class weight_quantize(nn.Module):
-    def __init__(self, w_bits, out_channel):
+    def __init__(self, w_bits, out_channel, alpha_bits = 32, transfer = -1):
         super().__init__()
         self.w_bits = w_bits
         #self.register_buffer('alpha', torch.zeros(out_channel))
         self.alpha =  Parameter(torch.rand( out_channel))
         self.register_buffer('init_state', torch.zeros(1))
-        print("Weights quantize bits ", self.w_bits)
+        self.alpha_bits = alpha_bits
+        self.init_flag = 0
+        self.transfer = transfer
+        print("Weights quantize bits ", self.w_bits, "  alpha_bits:", self.alpha_bits)
     def quantizer(self, input, alpha):
         output = quantizer_w.apply(input, alpha, self.w_bits)
         return output
@@ -147,6 +180,11 @@ class weight_quantize(nn.Module):
         scale = np.array(self.alpha)
         return scale
 
+    def quantize_alpha(self, alpha, alpha_bits = 32):
+        q_code = (alpha_bits - torch.ceil( torch.log2(torch.max(alpha)) + 1 - 10**(-5))).detach()
+        alpha_out = torch.clamp( torch.round( alpha * (2 ** q_code)), (-2**(alpha_bits-1)), (2**(alpha_bits-1) - 1) )  / (2 ** q_code)
+        return alpha_out
+
     def forward(self, input):
         if self.w_bits == 32:
             output = input
@@ -158,10 +196,19 @@ class weight_quantize(nn.Module):
                 w_r = input.reshape([input.shape[0], -1]).transpose(0, 1)            
                 self.alpha.data.copy_(w_r.detach().abs().max(dim=0)[0] / (2**(self.w_bits - 1)))
                 self.init_state.fill_(1)
+            elif self.init_flag == 0 and self.transfer != -1:
+                self.alpha.data.copy_(self.alpha.detach() * (2**self.transfer) / (2**(self.w_bits - 1)))
+                self.init_flag = 1
+
+            if self.alpha_bits == 32:
+                alpha = self.alpha
+            else:
+                alpha = self.quantize_alpha(self.alpha, self.alpha_bits)
+
             w_reshape = input.reshape([input.shape[0], -1]).transpose(0, 1)
-            wq = self.quantizer(w_reshape, self.alpha)
+            wq = self.quantizer(w_reshape, alpha)
             output = wq.transpose(0, 1).reshape(input.shape)
-        return output
+        return output, alpha.detach()
 
     def get_weights(self, input):
         if self.w_bits == 32:
@@ -177,6 +224,65 @@ class weight_quantize(nn.Module):
             output = wq.transpose(0, 1).reshape(input.shape)
         return output
 
+# ********************* Bias(模型参数)量化 ***********************
+class bias_quantization(nn.Module):
+    def __init__(self, out_channel ,alpha_bits = 32):
+        super().__init__()
+        self.alpha_bits = alpha_bits
+        print( "bias_quantization Bias_bits:", self.alpha_bits)
+        #self.alpha_w = Parameter(torch.rand( out_channel), requires_grad=False)
+        #self.alpha_a = Parameter(torch.rand(1), requires_grad=False)
+    def quantizer(self, input, alpha):
+        output = quantizer_bias.apply(input, alpha, self.alpha_bits)
+        return output
+
+    def get_quantize_value(self, input):
+        pose_clamp = 2 ** (self.alpha_bits - 1) - 1
+        nege_clamp = - 2 ** (self.alpha_bits - 1)
+        
+        output = torch.clamp(torch.round( input / (self.alpha_w * self.alpha_a) ), nege_clamp, pose_clamp) 
+        return output
+
+        ################获得量化因子所对应的移位数
+
+    def get_scale(self):
+        #############移位修正
+        # scale = float(2 ** self.w_bits - 1)
+        # scale = math.log2(scale)
+        scale = np.array(self.alpha)
+        return scale
+
+    def forward(self, input):
+        (input, alpha_w, alpha_a) = input
+        if self.alpha_bits == 32:
+            output = input
+        elif self.alpha_bits == 1:
+            print('！Binary quantization is not supported ！')
+            assert self.alpha_bits != 1
+        else:
+            self.alpha_w = alpha_w.detach()
+            self.alpha_a = alpha_a.detach()
+            if(alpha_a == 1) :
+                alpha = self.alpha_w
+            else:
+                alpha = self.alpha_w * self.alpha_a
+            output = self.quantizer(input, alpha)
+        return output
+
+    def get_weights(self, input):
+        if self.alpha_bits == 32:
+            output = input
+        elif self.alpha_bits == 1:
+            print('！Binary quantization is not supported ！')
+            assert self.alpha_bits != 1
+        else:
+            pose_clamp = 2 ** (self.alpha_bits - 1) - 1
+            nege_clamp = - 2 ** (self.alpha_bits - 1)
+            
+            output = torch.clamp(torch.round( input /  (self.alpha_w * self.alpha_a) ), nege_clamp, pose_clamp) 
+        return output
+
+
 # ********************* 量化卷积（同时量化A/W，并做卷积） ***********************
 class LLSQConv2d(nn.Conv2d):
     def __init__(
@@ -191,6 +297,67 @@ class LLSQConv2d(nn.Conv2d):
             bias=True,
             a_bits=8,
             w_bits=8,
+            alpha_bits = 32,
+            transfer   = -1,
+    ):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=groups,
+            bias=bias
+        )
+        self.a_bits = a_bits
+        self.w_bits = w_bits
+        self.alpha_bits = alpha_bits
+        # 实例化调用A和W量化器
+        self.activation_quantizer = activation_quantize(a_bits=self.a_bits, alpha_bits = self.alpha_bits, transfer = transfer)
+        self.weight_quantizer = weight_quantize(w_bits=self.w_bits, out_channel=out_channels, alpha_bits = self.alpha_bits, transfer = transfer)
+        if(self.alpha_bits != 32):
+            self.bias_quantization = bias_quantization(out_channel=out_channels, alpha_bits = self.alpha_bits)
+    def forward(self, input):
+        # 量化A和W
+        
+        if input.shape[1] != 3:
+            input, alpha_a = self.activation_quantizer(input)
+        else:
+            alpha_a = torch.tensor(1)
+        q_weight, alpha_w = self.weight_quantizer(self.weight)
+        if self.alpha_bits != 32 and self.bias != None:
+            bias_set = self.bias, alpha_w, alpha_a
+            bias = self.bias_quantization(bias_set)
+        else:
+            bias = self.bias
+        # 量化卷积
+        output = F.conv2d(
+            input=input,
+            weight=q_weight,
+            bias=bias,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=self.groups
+        )
+        return output
+
+class LLSQConv2dv2(nn.Conv2d):
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=1,
+            padding=0,
+            dilation=1,
+            groups=1,
+            bias=True,
+            a_bits=8,
+            w_bits=8,
+            alpha_bits = 32,
+            transfer   = -1,
     ):
         super().__init__(
             in_channels=in_channels,
@@ -203,25 +370,39 @@ class LLSQConv2d(nn.Conv2d):
             bias=bias
         )
         # 实例化调用A和W量化器
-        self.activation_quantizer = activation_quantize(a_bits=a_bits)
-        self.weight_quantizer = weight_quantize(w_bits=w_bits, out_channel=out_channels)
+        self.a_bits = a_bits
+        self.w_bits = w_bits
+        self.alpha_bits = alpha_bits
+        # 实例化调用A和W量化器
+        self.activation_quantizer = activation_quantize(a_bits=self.a_bits, alpha_bits = self.alpha_bits, transfer = transfer)
+        self.weight_quantizer = weight_quantize(w_bits=self.w_bits, out_channel=out_channels, alpha_bits = self.alpha_bits, transfer = transfer)
+        if(self.alpha_bits != 32):
+            self.bias_quantization = bias_quantization(out_channel=out_channels, alpha_bits = self.alpha_bits)
 
     def forward(self, input):
         # 量化A和W
-        if input.shape[1] != 3:
-            input = self.activation_quantizer(input)
-        q_weight = self.weight_quantizer(self.weight)
+        if input.shape[1] == 3 and self.a_bits == 8:
+            alpha_a = torch.tensor(1).detach()
+        else:
+            input, alpha_a = self.activation_quantizer(input)
+        q_weight, alpha_w = self.weight_quantizer(self.weight)
+        if self.alpha_bits != 32 and self.bias != None:
+            bias_set = self.bias, alpha_w, alpha_a
+            bias = self.bias_quantization(bias_set)
+        else:
+            bias = self.bias
         # 量化卷积
         output = F.conv2d(
             input=input,
             weight=q_weight,
-            bias=self.bias,
+            bias=bias,
             stride=self.stride,
             padding=self.padding,
             dilation=self.dilation,
             groups=self.groups
         )
         return output
+
 
 def reshape_to_activation(input):
     return input.reshape(1, -1, 1, 1)

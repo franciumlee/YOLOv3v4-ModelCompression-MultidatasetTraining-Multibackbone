@@ -21,6 +21,9 @@ last = wdir + 'last.pt'
 best = wdir + 'best.pt'
 results_file = 'results.txt'
 
+# 'lr0': 0.005, 
+# 'lrf': 0.00005,
+# 0.00261
 # Hyperparameters
 hyp = {'giou': 3.54,  # giou loss gain
        'cls': 37.4,  # cls loss gain
@@ -28,8 +31,8 @@ hyp = {'giou': 3.54,  # giou loss gain
        'obj': 64.3,  # obj loss gain (*=img_size/320 if img_size != 320)
        'obj_pw': 1.0,  # obj BCELoss positive_weight
        'iou_t': 0.20,  # iou training threshold
-       'lr0': 0.01,  # initial learning rate (SGD=5E-3, Adam=5E-4)
-       'lrf': 0.0005,  # final learning rate (with cos scheduler)
+       'lr0': 0.005,  # initial learning rate (SGD=5E-3, Adam=5E-4)
+       'lrf': 0.000005,  # final learning rate (with cos scheduler)
        'momentum': 0.937,  # SGD momentum
        'weight_decay': 0.0005,  # optimizer weight decay
        'fl_gamma': 0.0,  # focal loss gamma (efficientDet default is gamma=1.5)
@@ -109,36 +112,37 @@ def train(hyp):
     # Initialize model
     steps = math.ceil(len(open(train_path).readlines()) / batch_size) * epochs
     model = Darknet(cfg, quantized=opt.quantized, a_bit=opt.a_bit, w_bit=opt.w_bit,
-                    FPGA=opt.FPGA, steps=steps, is_gray_scale=opt.gray_scale, maxabsscaler=opt.maxabsscaler).to(device)
+                    FPGA=opt.FPGA, steps=steps, is_gray_scale=opt.gray_scale, maxabsscaler=opt.maxabsscaler,alpha_bits = opt.alpha_bits, transfer = opt.transfer).to(device)
     if t_cfg:
         t_model = Darknet(t_cfg).to(device)
-
+    print(device)
     # print('<.....................using gridmask.......................>')
     # gridmask = GridMask(d1=96, d2=224, rotate=360, ratio=0.6, mode=1, prob=0.8)
+    if opt.fuse_bn == False:
+        # Optimizer
+        pg0, pg1, pg2, pg3 = [], [], [], []  # optimizer parameter groups
+        for k, v in dict(model.named_parameters()).items():
+            if '.bias' in k:
+                pg2 += [v]  # biases
+            elif 'Conv2d.weight' in k:
+                pg1 += [v]  # apply weight_decay
+            elif ('alpha' in k) and (opt.freeze_bn == True):
+                pg3 += [v]
+            else:
+                pg0 += [v]  # all else
 
-    # Optimizer
-    pg0, pg1, pg2, pg3 = [], [], [], []  # optimizer parameter groups
-    for k, v in dict(model.named_parameters()).items():
-        if '.bias' in k:
-            pg2 += [v]  # biases
-        elif 'Conv2d.weight' in k:
-            pg1 += [v]  # apply weight_decay
-        #elif 'alpha' in k:
-        #    pg3 += [v]
+        if opt.adam:
+            # hyp['lr0'] *= 0.1  # reduce lr (i.e. SGD=5E-3, Adam=5E-4)
+            optimizer = optim.Adam(pg0, lr=hyp['lr0'])
+            # optimizer = AdaBound(pg0, lr=hyp['lr0'], final_lr=0.1)
         else:
-            pg0 += [v]  # all else
-
-    if opt.adam:
-        # hyp['lr0'] *= 0.1  # reduce lr (i.e. SGD=5E-3, Adam=5E-4)
-        optimizer = optim.Adam(pg0, lr=hyp['lr0'])
-        # optimizer = AdaBound(pg0, lr=hyp['lr0'], final_lr=0.1)
-    else:
-        optimizer = optim.SGD(pg0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
-    optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
-    optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
-    optimizer.add_param_group({'params': pg3, 'lr':hyp['lr0']* 1e-3})
-    print('Optimizer groups: %g .bias, %g Conv2d.weight, %g Quantization parameter,%g other' % (len(pg2), len(pg1), len(pg3), len(pg0)))
-    del pg0, pg1, pg2
+            optimizer = optim.SGD(pg0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
+        optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
+        optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
+        if (opt.freeze_bn == True):
+            optimizer.add_param_group({'params': pg3, 'lr':hyp['lr0']* 1e-1})
+        print('Optimizer groups: %g .bias, %g Conv2d.weight, %g Quantization parameter,%g other' % (len(pg2), len(pg1), len(pg3), len(pg0)))
+        del pg0, pg1, pg2, pg3
 
     if opt.freeze_bn:
         print("Freeze BN XXD")
@@ -149,7 +153,10 @@ def train(hyp):
                 if hasattr(module, 'bias'):
                     module.bias.requires_grad_(False)
                 module.eval()
-
+    if opt.fuse_bn and opt.resume:
+        model.cpu()
+        model.fuse(quantized=opt.quantized)
+        model.to(device)
     best_fitness = 0.0
     if weights != 'None':
         attempt_download(weights)
@@ -168,15 +175,23 @@ def train(hyp):
 
             # load optimizer
             if chkpt['optimizer'] is not None:
-                optimizer.load_state_dict(chkpt['optimizer'])
-                if chkpt.get('best_fitness') is not None:
+                try:
+                    optimizer.load_state_dict(chkpt['optimizer'])
+                except:
+                    print("Ignore optimizer")
+                
+                if chkpt.get('best_fitness') is not None and (opt.start_epochs == -1):
                     best_fitness = chkpt['best_fitness']
             # load results
             if chkpt.get('training_results') is not None:
                 with open(results_file, 'w') as file:
                     file.write(chkpt['training_results'])  # write results.txt
-            if chkpt.get('epoch') is not None:
+            if (chkpt.get('epoch') is not None) and (opt.start_epochs == -1):
                 start_epoch = chkpt['epoch'] + 1
+                print("start epoch: ", start_epoch)
+            else:
+                start_epoch = opt.start_epochs
+                print("start epoch: ", start_epoch)
             del chkpt
 
         elif len(weights) > 0:  # darknet format
@@ -193,10 +208,7 @@ def train(hyp):
         print('<.....................using knowledge distillation.......................>')
         print('teacher model:', t_weights, '\n')
 
-    # Scheduler https://arxiv.org/pdf/1812.01187.pdf
-    lf = lambda x: (((1 + math.cos(x * math.pi / epochs)) / 2) ** 1.0) * 0.95 + 0.05  # cosine
-    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
-    scheduler.last_epoch = start_epoch - 1  # see link below
+    
     # https://discuss.pytorch.org/t/a-problem-occured-when-resuming-an-optimizer/28822
 
     # # Plot lr schedule
@@ -210,6 +222,42 @@ def train(hyp):
     # plt.tight_layout()
     # plt.savefig('LR.png', dpi=300)
 
+    if opt.fuse_bn and opt.resume == False:
+        model.cpu()
+        model.fuse(quantized=opt.quantized)
+        model.to(device)
+        # Optimizer
+        pg0, pg1, pg2, pg3 = [], [], [], []  # optimizer parameter groups
+        for k, v in dict(model.named_parameters()).items():
+            
+            if '.bias' in k:
+                pg2 += [v]  # biases
+            elif ('quantizer.alpha' in k) and (opt.freeze_bn == True):
+                pg3 += [v]
+                print(k)
+            elif '0.weight' or 'Conv2d.weight' in k:
+                #print(k)
+                pg1 += [v]  # apply weight_decay
+            else:
+                pg0 += [v]  # all else
+
+        if opt.adam:
+            # hyp['lr0'] *= 0.1  # reduce lr (i.e. SGD=5E-3, Adam=5E-4)
+            optimizer = optim.Adam(pg1, lr=hyp['lr0'])
+            # optimizer = AdaBound(pg0, lr=hyp['lr0'], final_lr=0.1)
+        else:
+            optimizer = optim.SGD(pg1, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
+        #optimizer.add_param_group({'params': pg1, 'weight_decay': hyp['weight_decay']})  # add pg1 with weight_decay
+        optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
+        if (opt.freeze_bn == True):
+            optimizer.add_param_group({'params': pg3, 'lr':hyp['lr0']* 1e-1})
+        print('Optimizer groups: %g .bias, %g Conv2d.weight, %g Quantization parameter,%g other' % (len(pg2), len(pg1), len(pg3), len(pg0)))
+        del pg0, pg1, pg2, pg3
+    
+    # Scheduler https://arxiv.org/pdf/1812.01187.pdf
+    lf = lambda x: (((1 + math.cos(x * math.pi / epochs)) / 2) ** 1.0) * 0.95 + 0.05  # cosine
+    scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    scheduler.last_epoch = start_epoch - 1  # see link below
     # Initialize distributed training
     if opt.local_rank != -1:
         model = DDP(model, device_ids=[opt.local_rank], output_device=opt.local_rank, find_unused_parameters=True)
@@ -267,7 +315,7 @@ def train(hyp):
 
     # Dataloader
     batch_size = min(batch_size, len(dataset))
-    nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
+    nw = torch.cuda.device_count() * 4# min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
     dataloader = torch.utils.data.DataLoader(dataset,
                                              batch_size=int(batch_size / opt.world_size),
                                              num_workers=nw,
@@ -529,11 +577,12 @@ def train(hyp):
             for x, tag in zip(list(mloss[:-1]) + list(results), tags):
                 tb_writer.add_scalar(tag, x, epoch)
             if opt.prune != -1:
-                if hasattr(model, 'module'):
-                    bn_weights = gather_bn_weights(model.module.module_list, [idx])
-                else:
-                    bn_weights = gather_bn_weights(model.module_list, [idx])
-                tb_writer.add_histogram('bn_weights/hist', bn_weights.numpy(), epoch, bins='doane')
+                for idx in prune_idx:
+                    if hasattr(model, 'module'):
+                        bn_weights = gather_bn_weights(model.module.module_list, [idx])
+                    else:
+                        bn_weights = gather_bn_weights(model.module_list, [idx])
+                    tb_writer.add_histogram('bn_weights/hist', bn_weights.numpy(), epoch, bins='doane')
 
         # Update best mAP
         fi = fitness(np.array(results).reshape(1, -1))  # fitness_i = weighted combination of [P, R, mAP, F1]
@@ -623,13 +672,17 @@ if __name__ == '__main__':
     parser.add_argument('--quantized', type=int, default=-1, help='quantization way')
     parser.add_argument('--a-bit', type=int, default=8, help='a-bit')
     parser.add_argument('--w-bit', type=int, default=8, help='w-bit')
+    parser.add_argument('--alpha-bits', type=int, default=32, help='alpha bits')
     parser.add_argument('--FPGA', '-FPGA', dest='FPGA', action='store_true', help='FPGA')
     parser.add_argument('--gray-scale', action='store_true', help='gray scale trainning')
     parser.add_argument('--maxabsscaler', '-mas', action='store_true', help='Standarize input to (-1,1)')
     # DDP get local-rank
     parser.add_argument('--rank', default=0, help='rank of current process')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--freeze-bn', action='store_true', help='freeze - bn')
+    parser.add_argument('--freeze-bn', action='store_true', help='freeze bn')
+    parser.add_argument('--fuse-bn', action='store_true', help='freeze bn')
+    parser.add_argument('--start-epochs', type=int, default=-1, help='setting start epoch')
+    parser.add_argument('--transfer', type=int, default=-1, help='for transfer learning')
 
     opt = parser.parse_args()
     opt.weights = last if opt.resume else opt.weights
